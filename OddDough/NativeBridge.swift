@@ -174,7 +174,7 @@ final class NativeBridge: NSObject {
         case "walletSettings":
             notice("Wallet capture needs Android notification access and isn't available on iOS.")
         case "checkForUpdate":
-            notice("Updates come from the App Store on iOS.")
+            checkForAppStoreUpdate()
         case "clearPendingUpdate", "openInstallSettings":
             break // Android-only updater; no-op on iOS.
         default:
@@ -213,6 +213,41 @@ final class NativeBridge: NSObject {
                 self.notice("Could not prepare the export.")
             }
         }
+    }
+
+    /// iOS update check. There is no sideload install path on iOS, so "update"
+    /// means "a newer version is on the App Store". Query the iTunes Lookup
+    /// API and feed the existing window.cashCompassUpdateCheck callback with
+    /// the same shape the Android side sends. apkUrl stays absent, so the
+    /// dialog shows the version info without a download button; the notes
+    /// tell the user to update via the App Store.
+    private func checkForAppStoreUpdate() {
+        guard let url = URL(string: "https://itunes.apple.com/lookup?bundleId=com.cashcompass.app") else {
+            jsCallback("cashCompassUpdateCheck", jsQuote("{\"ok\":false,\"error\":\"Bad lookup URL.\"}"))
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self else { return }
+            var payload: [String: Any] = ["ok": false, "error": "OddDough isn't on the App Store yet."]
+            if let data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (obj["resultCount"] as? Int ?? 0) > 0,
+               let r = (obj["results"] as? [[String: Any]])?.first,
+               let version = r["version"] as? String, !version.isEmpty {
+                let notes = (r["releaseNotes"] as? String) ?? ""
+                let guidance = "This iOS release is distributed through the App Store — " +
+                    "open the App Store to install it. (There is no APK on iOS.)"
+                payload = [
+                    "ok": true,
+                    "tag": version,
+                    "name": "OddDough \(version)",
+                    "notes": notes.isEmpty ? guidance : notes + "\n\n" + guidance
+                ]
+            }
+            let text = (try? JSONSerialization.data(withJSONObject: payload))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "{\"ok\":false}"
+            self.jsCallback("cashCompassUpdateCheck", self.jsQuote(text))
+        }.resume()
     }
 
     private func requestNotifications() {

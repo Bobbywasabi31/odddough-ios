@@ -28,6 +28,18 @@ changes). What this repo adds is the iOS shell around it:
     receipt OCR camera scan (Apple Vision is the v2 path — paste fallback
     works today)
 - `OddDough/SecureStore.swift` — Keychain wrapper
+- `scripts/sync-www.sh` — re-copies the web UI from the Android repo and
+  patches `APP_VERSION` to the iOS marketing version (the update dialog
+  compares it against the release tag)
+
+## Updates
+
+iOS has no sideload path, so the Android in-app updater is reimplemented the
+iOS way: `checkForUpdate()` queries the iTunes Lookup API for the App Store
+version and feeds the existing update dialog. If a newer version is out, the
+dialog shows it and points at the App Store — installs and data-preserving
+updates are handled there automatically. (Until the app is actually published,
+the check reports "not on the App Store yet.")
 
 ## Build
 
@@ -55,7 +67,12 @@ WidgetKit widgets, Vision receipt OCR, App Store metadata + screenshots
 
 ## Updating the web UI
 
-`www/` is a verbatim copy of `odddough-android/app/src/main/assets`. When the
-Android app ships UI changes, copy the assets over — no Swift changes needed
-unless a new `NativeBridge` method was added (check `Bridge` in
-`MainActivity.java`).
+`www/` is a copy of `odddough-android/app/src/main/assets` plus the iOS
+`APP_VERSION` patch. When the Android app ships UI changes, re-run:
+
+```sh
+scripts/sync-www.sh /path/to/odddough-android/app/src/main/assets
+```
+
+No Swift changes needed unless a new `NativeBridge` method was added (check
+`Bridge` in `MainActivity.java`).

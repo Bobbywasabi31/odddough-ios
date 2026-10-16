@@ -1,6 +1,6 @@
 /* Offline interface. The coach explains calculations; it is not a connected AI model. */
 'use strict';
-const C = CashCore, STORE = 'cash-compass-v2', APP_VERSION = '1.64.1';
+const C = CashCore, STORE = 'cash-compass-v2', APP_VERSION = '1.0.0';
 // Currency & locale (roadmap #89): money() renders in the user's base currency
 // and locale; moneyIn() renders a value in a specific account currency.
 const cur = () => C.currencySettings(state.currency);
