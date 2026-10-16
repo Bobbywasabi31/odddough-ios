@@ -34,12 +34,11 @@ changes). What this repo adds is the iOS shell around it:
 
 ## Updates
 
-iOS has no sideload path, so the Android in-app updater is reimplemented the
-iOS way: `checkForUpdate()` queries the iTunes Lookup API for the App Store
-version and feeds the existing update dialog. If a newer version is out, the
-dialog shows it and points at the App Store — installs and data-preserving
-updates are handled there automatically. (Until the app is actually published,
-the check reports "not on the App Store yet.")
+Mirrors Android: `checkForUpdate()` reads the GitHub releases list
+(`odddough-ios`, newest non-draft, prereleases included) and feeds the same
+update dialog. iOS has no sideload path, so there's no download button — the
+dialog shows the version info and points at the App Store / TestFlight, where
+installs and data-preserving updates happen automatically.
 
 ## Build
 

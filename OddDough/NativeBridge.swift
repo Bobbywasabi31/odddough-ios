@@ -174,7 +174,7 @@ final class NativeBridge: NSObject {
         case "walletSettings":
             notice("Wallet capture needs Android notification access and isn't available on iOS.")
         case "checkForUpdate":
-            checkForAppStoreUpdate()
+            checkForGitHubUpdate()
         case "clearPendingUpdate", "openInstallSettings":
             break // Android-only updater; no-op on iOS.
         default:
@@ -215,32 +215,34 @@ final class NativeBridge: NSObject {
         }
     }
 
-    /// iOS update check. There is no sideload install path on iOS, so "update"
-    /// means "a newer version is on the App Store". Query the iTunes Lookup
-    /// API and feed the existing window.cashCompassUpdateCheck callback with
-    /// the same shape the Android side sends. apkUrl stays absent, so the
-    /// dialog shows the version info without a download button; the notes
-    /// tell the user to update via the App Store.
-    private func checkForAppStoreUpdate() {
-        guard let url = URL(string: "https://itunes.apple.com/lookup?bundleId=com.cashcompass.app") else {
-            jsCallback("cashCompassUpdateCheck", jsQuote("{\"ok\":false,\"error\":\"Bad lookup URL.\"}"))
+    /// iOS update check, mirroring Android: query the GitHub releases list and
+    /// take the newest non-draft entry (prereleases included — OddDough ships
+    /// every version as a prerelease, and /releases/latest 404s on those).
+    /// There is no sideload install on iOS, so apkUrl stays absent and the
+    /// notes point at the App Store / TestFlight; the dialog otherwise behaves
+    /// exactly like Android's.
+    private func checkForGitHubUpdate() {
+        guard let url = URL(string: "https://api.github.com/repos/Bobbywasabi31/odddough-ios/releases") else {
+            jsCallback("cashCompassUpdateCheck", jsQuote("{\"ok\":false,\"error\":\"Bad releases URL.\"}"))
             return
         }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        var req = URLRequest(url: url)
+        req.setValue("OddDough-iOS", forHTTPHeaderField: "User-Agent")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
             guard let self else { return }
-            var payload: [String: Any] = ["ok": false, "error": "OddDough isn't on the App Store yet."]
+            var payload: [String: Any] = ["ok": false, "error": "No releases found."]
             if let data,
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (obj["resultCount"] as? Int ?? 0) > 0,
-               let r = (obj["results"] as? [[String: Any]])?.first,
-               let version = r["version"] as? String, !version.isEmpty {
-                let notes = (r["releaseNotes"] as? String) ?? ""
-                let guidance = "This iOS release is distributed through the App Store — " +
-                    "open the App Store to install it. (There is no APK on iOS.)"
+               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let rel = list.first(where: { !($0["draft"] as? Bool ?? false) }),
+               let tag = rel["tag_name"] as? String, !tag.isEmpty {
+                let name = (rel["name"] as? String) ?? tag
+                let notes = (rel["body"] as? String) ?? ""
+                let guidance = "On iOS, updates install from the App Store or TestFlight."
                 payload = [
                     "ok": true,
-                    "tag": version,
-                    "name": "OddDough \(version)",
+                    "tag": tag,
+                    "name": name,
                     "notes": notes.isEmpty ? guidance : notes + "\n\n" + guidance
                 ]
             }
