@@ -24,10 +24,17 @@ changes). What this repo adds is the iOS shell around it:
     notification permission, bill reminders + weekly recap via local
     notifications
   - **Stubbed (platform limitations):** wallet notification capture (iOS has
-    no notification-listener API), in-app updater (App Store owns updates),
-    receipt OCR camera scan (Apple Vision is the v2 path — paste fallback
-    works today)
+    no notification-listener API), in-app updater (App Store owns updates)
 - `OddDough/SecureStore.swift` — Keychain wrapper
+- Home-screen **Quick Actions** (Android's launcher shortcuts): long-press
+  the icon for Add expense / Add income, routed into the web UI
+- **Receipt photos**: the web file input is routed to a native picker
+  (camera or library); Vision OCR fills merchant/total/date exactly like
+  Android's ML Kit flow
+- **Voice entry**: a `SpeechRecognition` polyfill in the shim backs the web
+  UI's mic button with SFSpeechRecognizer
+- **Share sheet**: a `navigator.share` polyfill routes the summary through
+  UIActivityViewController
 - `scripts/sync-www.sh` — re-copies the web UI from the Android repo and
   patches `APP_VERSION` to the iOS marketing version (the update dialog
   compares it against the release tag)
@@ -60,8 +67,9 @@ them as one product.
 ## Status
 
 v1 scaffold: the app runs, the full UI works, statement import / export /
-backup / notifications / app lock are wired. Deliberately deferred:
-WidgetKit widgets, Vision receipt OCR, App Store metadata + screenshots
+backup / notifications / app lock / receipt scan / voice entry / share /
+Quick Actions are wired. Deliberately deferred:
+WidgetKit widgets, App Store metadata + screenshots
 (needs the $99/yr Apple Developer membership).
 
 ## Updating the web UI

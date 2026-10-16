@@ -43,6 +43,21 @@ struct WebViewContainer: UIViewRepresentable {
         let bridge = NativeBridge()
         private static let syncPrefix = "odddough-bridge:"
 
+        override init() {
+            super.init()
+            // Quick Actions ("Add expense"/"Add income") delivered into the page.
+            ShortcutRelay.shared.deliver = { [weak self] kind in
+                self?.deliverShortcut(kind: kind)
+            }
+        }
+
+        private func deliverShortcut(kind: String) {
+            let script = "window.cashCompassShortcut && window.cashCompassShortcut('\(kind)');"
+            DispatchQueue.main.async { [weak self] in
+                self?.bridge.webView?.evaluateJavaScript(script, completionHandler: nil)
+            }
+        }
+
         // Async channel: window.webkit.messageHandlers.odddoughAsync.postMessage({m, a})
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
@@ -95,6 +110,13 @@ struct WebViewContainer: UIViewRepresentable {
                 return
             }
             decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // Flush any Quick Action that fired before the page was ready.
+            if let kind = ShortcutRelay.shared.takePending() {
+                deliverShortcut(kind: kind)
+            }
         }
 
         private func topViewController(from webView: WKWebView) -> UIViewController? {

@@ -13,5 +13,32 @@
     <string>UIStatusBarStyleDarkContent</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>OddDough uses the camera to photograph receipts for automatic expense entry. Photos stay on your device.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>OddDough reads receipt photos you choose, to fill in merchant, total, and date automatically. Photos stay on your device.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>OddDough transcribes what you say into the quick-entry field. Transcription may use Apple's servers; nothing is stored.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>OddDough listens briefly for voice entry when you tap the microphone button.</string>
+    <key>UIApplicationShortcutItems</key>
+    <array>
+        <dict>
+            <key>UIApplicationShortcutItemType</key>
+            <string>com.cashcompass.app.add-expense</string>
+            <key>UIApplicationShortcutItemTitle</key>
+            <string>Add expense</string>
+            <key>UIApplicationShortcutItemIconType</key>
+            <string>UIApplicationShortcutIconTypeAdd</string>
+        </dict>
+        <dict>
+            <key>UIApplicationShortcutItemType</key>
+            <string>com.cashcompass.app.add-income</string>
+            <key>UIApplicationShortcutItemTitle</key>
+            <string>Add income</string>
+            <key>UIApplicationShortcutItemIconType</key>
+            <string>UIApplicationShortcutIconTypeAdd</string>
+        </dict>
+    </array>
 </dict>
 </plist>

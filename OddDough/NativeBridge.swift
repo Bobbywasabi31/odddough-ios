@@ -4,6 +4,9 @@ import UserNotifications
 import LocalAuthentication
 import UIKit
 import UniformTypeIdentifiers
+import Vision
+import Speech
+import AVFoundation
 
 /// iOS mirror of Android's `NativeBridge` (MainActivity.Bridge).
 /// The web UI (www/*) is shared verbatim with the Android app; this class
@@ -175,6 +178,10 @@ final class NativeBridge: NSObject {
             notice("Wallet capture needs Android notification access and isn't available on iOS.")
         case "checkForUpdate":
             checkForGitHubUpdate()
+        case "pickReceipt": pickReceipt()
+        case "startVoiceInput": startVoiceInput(lang: strArg(args, 0))
+        case "stopVoiceInput": stopVoiceInput()
+        case "shareText": shareText(title: strArg(args, 0), text: strArg(args, 1))
         case "clearPendingUpdate", "openInstallSettings":
             break // Android-only updater; no-op on iOS.
         default:
@@ -252,6 +259,177 @@ final class NativeBridge: NSObject {
         }.resume()
     }
 
+    // MARK: - Receipt photo + Vision OCR (Android: photo picker + ML Kit)
+
+    /// WKWebView can't open file inputs; the shim routes receipt taps here.
+    private func pickReceipt() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let vc = self.presentingVC() else { return }
+            let sheet = UIAlertController(title: "Receipt photo", message: nil, preferredStyle: .actionSheet)
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                sheet.addAction(UIAlertAction(title: "Take photo", style: .default) { _ in
+                    self.presentImagePicker(source: .camera)
+                })
+            }
+            sheet.addAction(UIAlertAction(title: "Choose from library", style: .default) { _ in
+                self.presentImagePicker(source: .photoLibrary)
+            })
+            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            if let pop = sheet.popoverPresentationController {
+                pop.sourceView = vc.view
+                pop.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 0, height: 0)
+            }
+            vc.present(sheet, animated: true)
+        }
+    }
+
+    private func presentImagePicker(source: UIImagePickerController.SourceType) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let vc = self.presentingVC() else { return }
+            let picker = UIImagePickerController()
+            picker.sourceType = source
+            picker.delegate = self
+            vc.present(picker, animated: true)
+        }
+    }
+
+    /// Normalize orientation, downscale to a 1600px max edge (like Android),
+    /// and return a JPEG data URL.
+    private func receiptDataURL(from image: UIImage) -> String? {
+        let maxEdge: CGFloat = 1600
+        var size = image.size
+        let scale = min(1, maxEdge / max(size.width, size.height))
+        size = CGSize(width: size.width * scale, height: size.height * scale)
+        UIGraphicsBeginImageContextWithOptions(size, true, 1)
+        defer { UIGraphicsEndImageContext() }
+        image.draw(in: CGRect(origin: .zero, size: size))
+        guard let normalized = UIGraphicsGetImageFromCurrentImageContext(),
+              let jpeg = normalized.jpegData(compressionQuality: 0.85) else { return nil }
+        return "data:image/jpeg;base64," + jpeg.base64EncodedString()
+    }
+
+    /// Same block shape Android's ML Kit payload uses: {t: text, h: height px,
+    /// y: top px} so the web form's merchant-vs-artifact heuristics just work.
+    private func runReceiptOCR(image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
+        let request = VNRecognizeTextRequest { [weak self] req, _ in
+            guard let self else { return }
+            var fullText = ""
+            var blocks: [[String: Any]] = []
+            let h = CGFloat(cgImage.height)
+            for obs in (req.results as? [VNRecognizedTextObservation] ?? []) {
+                guard let line = obs.topCandidates(1).first else { continue }
+                let box = obs.boundingBox
+                fullText += line.string + "\n"
+                blocks.append([
+                    "t": line.string,
+                    "h": Int(box.height * h),
+                    "y": Int((1 - box.maxY) * h)
+                ])
+            }
+            let payload: [String: Any] = ["text": fullText, "blocks": blocks]
+            if let data = try? JSONSerialization.data(withJSONObject: payload),
+               let json = String(data: data, encoding: .utf8) {
+                self.jsCallback("cashCompassReceiptOCR", self.jsQuote(json))
+            }
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+        }
+    }
+
+    // MARK: - Voice entry (Android: web SpeechRecognition; iOS: SFSpeechRecognizer)
+
+    private var speechRecognizer: SFSpeechRecognizer?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var audioEngine: AVAudioEngine?
+
+    private func startVoiceInput(lang: String?) {
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            guard let self else { return }
+            guard status == .authorized else {
+                self.jsCallback("cashCompassVoiceError", "null")
+                return
+            }
+            DispatchQueue.main.async { self.beginListening(lang: lang) }
+        }
+    }
+
+    private func beginListening(lang: String?) {
+        stopVoiceInput()
+        let locale = Locale(identifier: (lang?.isEmpty == false ? lang! : "en-US"))
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            jsCallback("cashCompassVoiceError", "null")
+            return
+        }
+        speechRecognizer = recognizer
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            jsCallback("cashCompassVoiceError", "null")
+            return
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = false
+        recognitionRequest = request
+        let engine = AVAudioEngine()
+        audioEngine = engine
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            request.append(buffer)
+        }
+        engine.prepare()
+        do { try engine.start() } catch {
+            jsCallback("cashCompassVoiceError", "null")
+            return
+        }
+        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else { return }
+            if let result, result.isFinal {
+                let transcript = result.bestTranscription.formattedString
+                self.stopVoiceInput()
+                self.jsCallback("cashCompassVoiceResult", self.jsQuote(transcript))
+            } else if error != nil {
+                self.stopVoiceInput()
+                self.jsCallback("cashCompassVoiceError", "null")
+            }
+        }
+    }
+
+    private func stopVoiceInput() {
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        audioEngine = nil
+        recognitionRequest = nil
+        recognitionTask = nil
+        speechRecognizer = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    // MARK: - Share sheet (Android: navigator.share; iOS: polyfilled)
+
+    private func shareText(title: String?, text: String?) {
+        let items = [title, text].compactMap { $0 }.filter { !$0.isEmpty }
+        guard !items.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let vc = self.presentingVC() else { return }
+            let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            if let pop = sheet.popoverPresentationController {
+                pop.sourceView = vc.view
+                pop.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 0, height: 0)
+            }
+            vc.present(sheet, animated: true)
+        }
+    }
+
     private func requestNotifications() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
             self?.cachedNotificationsAllowed = granted
@@ -314,8 +492,7 @@ final class NativeBridge: NSObject {
 
 // MARK: - UIDocumentPickerDelegate
 
-extension NativeBridge: UIDocumentPickerDelegate {
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+extension NativeBridge: UIDocumentPickerDelegate {    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { return }
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -335,4 +512,26 @@ extension NativeBridge: UIDocumentPickerDelegate {
 
 extension UTType {
     static var commaSeparatedText: UTType { UTType("public.comma-separated-values-text") ?? .plainText }
+}
+
+// MARK: - UIImagePickerControllerDelegate (receipt photos)
+
+extension NativeBridge: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    func imagePickerController(_ picker: UIImagePickerController,
+                               didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        picker.dismiss(animated: true)
+        guard let image = info[.originalImage] as? UIImage,
+              let dataURL = receiptDataURL(from: image) else {
+            notice("Couldn't read that photo.")
+            return
+        }
+        // Hand the data URL to the shim, which fills the form exactly like
+        // the web file-input path does; then run Vision OCR like ML Kit.
+        jsCallback("cashCompassReceiptImage", jsQuote(dataURL))
+        runReceiptOCR(image: image)
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
+    }
 }
