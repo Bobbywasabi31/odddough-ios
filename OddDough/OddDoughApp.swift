@@ -55,11 +55,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct OddDoughApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var lock = AppLockManager()
 
     var body: some Scene {
         WindowGroup {
-            WebViewContainer()
-                .ignoresSafeArea(.keyboard)
+            ZStack {
+                WebViewContainer()
+                    .ignoresSafeArea(.keyboard)
+                if lock.locked {
+                    LockScreen(lock: lock)
+                }
+            }
         }
     }
 }

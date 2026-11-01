@@ -13,6 +13,8 @@
     <string>UIStatusBarStyleDarkContent</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <true/>
+    <key>NSFaceIDUsageDescription</key>
+    <string>OddDough uses Face ID to unlock the app when you turn on the app lock. Nothing leaves your device.</string>
     <key>NSCameraUsageDescription</key>
     <string>OddDough uses the camera to photograph receipts for automatic expense entry. Photos stay on your device.</string>
     <key>NSPhotoLibraryUsageDescription</key>
